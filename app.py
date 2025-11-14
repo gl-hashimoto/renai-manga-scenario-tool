@@ -5,6 +5,9 @@ from datetime import datetime
 import json
 from dotenv import load_dotenv, set_key
 
+# バージョン情報
+VERSION = "1.1.0"
+
 # ページ設定
 st.set_page_config(
     page_title="恋愛漫画シナリオ生成ツール | 愛カツ",
@@ -50,6 +53,33 @@ st.markdown("""
         color: #FF1493;
         margin-bottom: 0.5rem;
     }
+    /* バージョン表示 */
+    .version-badge {
+        display: inline-block;
+        background-color: #e0e0e0;
+        color: #555;
+        font-size: 0.9rem;
+        font-weight: normal;
+        padding: 0.2rem 0.6rem;
+        border-radius: 12px;
+        margin-left: 1rem;
+        vertical-align: middle;
+    }
+    /* 履歴リンクのスタイル */
+    [data-testid="stSidebar"] button[kind="secondary"] {
+        background-color: white !important;
+        color: #333 !important;
+        border: none !important;
+        text-align: left !important;
+        padding: 0.5rem 0.75rem !important;
+        font-size: 0.9rem !important;
+        font-weight: normal !important;
+        border-radius: 4px !important;
+        margin-bottom: 0.25rem !important;
+    }
+    [data-testid="stSidebar"] button[kind="secondary"]:hover {
+        background-color: #f0f0f0 !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -93,8 +123,9 @@ def check_and_fix_scenario(api_key, scenario_draft):
 """
 
     try:
+        # チェック工程はHaikuモデルを使用してコスト削減
         message = client.messages.create(
-            model="claude-sonnet-4-5-20250929",
+            model="claude-haiku-3-5-20250313",
             max_tokens=8000,
             temperature=0.3,
             messages=[
@@ -136,12 +167,20 @@ def generate_scenario(api_key, theme, story_format, tone, additional_notes=""):
 """
 
     try:
+        # プロンプトキャッシュを使用してコスト削減
         message = client.messages.create(
             model="claude-sonnet-4-5-20250929",
             max_tokens=8000,
             temperature=1.0,
+            system=[
+                {
+                    "type": "text",
+                    "text": master_prompt,
+                    "cache_control": {"type": "ephemeral"}
+                }
+            ],
             messages=[
-                {"role": "user", "content": master_prompt + "\n\n" + user_prompt}
+                {"role": "user", "content": user_prompt}
             ]
         )
 
@@ -220,7 +259,7 @@ def main():
     load_dotenv()
 
     # ヘッダー
-    st.markdown('<div class="main-header">💘 恋愛漫画シナリオ生成ツール</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="main-header">💘 恋愛漫画シナリオ生成ツール <span class="version-badge">v{VERSION}</span></div>', unsafe_allow_html=True)
     st.markdown('<div class="sub-header">バズる恋愛漫画を1日10本生成！｜愛カツ専用ツール</div>', unsafe_allow_html=True)
 
     # サイドバー設定
@@ -275,15 +314,15 @@ def main():
 
         # 履歴表示
         st.subheader("📚 生成履歴")
-        if st.button("履歴を更新"):
+        if st.button("履歴を更新", type="primary"):
             st.rerun()
 
         histories = load_history()
         if histories:
             for i, hist in enumerate(histories, 1):
-                # クリック可能なボタンとして表示
-                if st.button(f"{i}. {hist['theme'][:30]}...", key=f"hist_btn_{i}"):
-                    # 履歴をクリックしたら、その内容をセッションステートに保存
+                # テキストリンク形式で表示（20文字制限）
+                theme_preview = hist['theme'][:20]
+                if st.button(theme_preview, key=f"hist_link_{i}", type="secondary", use_container_width=False):
                     st.session_state.selected_history = hist
                     st.session_state.selected_history_index = i
                     st.rerun()
