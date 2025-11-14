@@ -1,7 +1,2 @@
-[server]
-port = 8506
-headless = true
-address = "localhost"
-
-[browser]
-gatherUsageStats = false
+# Streamlit Community Cloud用の設定
+# ローカルでのポート指定はstart.shで行います

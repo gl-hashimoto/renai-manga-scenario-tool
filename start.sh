@@ -10,5 +10,5 @@ echo ""
 # スクリプトのディレクトリに移動
 cd "$(dirname "$0")"
 
-# Streamlitを起動
-/Users/s-hashimoto/Documents/CURSOR/.venv/bin/streamlit run app.py
+# Streamlitを起動（ローカルでは8506、デプロイ時は自動割り当て）
+/Users/s-hashimoto/Documents/CURSOR/.venv/bin/streamlit run app.py --server.port 8506
