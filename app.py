@@ -3,15 +3,32 @@ import anthropic
 import os
 from datetime import datetime
 import json
+import re
 from dotenv import load_dotenv, set_key
 
 # バージョン情報
-VERSION = "1.1.0"
+VERSION = "2.0.0"
+PROMPT_VERSION = "2.0"  # プロンプトバージョン（最適化版：639行→415行に削減）
+
+# 文字数カウント関数
+def count_characters(text):
+    """
+    シナリオの文字数を正確にカウント
+    改行、記号（※、「」、『』、■など）、かぎ括弧を除いた純粋なテキスト文字のみカウント
+    """
+    # 改行を削除
+    text = text.replace('\n', '').replace('\r', '')
+
+    # 除外する記号・括弧を削除
+    text = re.sub(r'[※「」『』■\(\)（）…！？!?〜～\s]', '', text)
+
+    # 残った文字数をカウント
+    return len(text)
 
 # ページ設定
 st.set_page_config(
-    page_title="恋愛漫画シナリオ生成ツール | 愛カツ",
-    page_icon="💘",
+    page_title="恋愛漫画シナリオ生成ツールv2 | 愛カツ",
+    page_icon="💙",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -22,7 +39,7 @@ st.markdown("""
     .main-header {
         font-size: 2.5rem;
         font-weight: bold;
-        color: #FF69B4;
+        color: #1E90FF;
         text-align: center;
         margin-bottom: 1rem;
     }
@@ -34,7 +51,7 @@ st.markdown("""
     }
     .stButton>button {
         width: 100%;
-        background-color: #FF69B4;
+        background-color: #1E90FF;
         color: white;
         font-size: 1.2rem;
         font-weight: bold;
@@ -42,7 +59,7 @@ st.markdown("""
         border-radius: 10px;
     }
     .output-section {
-        background-color: #FFF0F5;
+        background-color: #E6F2FF;
         padding: 1.5rem;
         border-radius: 10px;
         margin-top: 1rem;
@@ -50,7 +67,7 @@ st.markdown("""
     .scenario-title {
         font-size: 1.5rem;
         font-weight: bold;
-        color: #FF1493;
+        color: #1E90FF;
         margin-bottom: 0.5rem;
     }
     /* バージョン表示 */
@@ -83,53 +100,156 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# プロンプトバージョン管理関数
+def save_prompt_version(version, description=""):
+    """現在のプロンプトを新しいバージョンとして保存"""
+    versions_dir = os.path.join(os.path.dirname(__file__), "prompts", "versions")
+    os.makedirs(versions_dir, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    version_filename = f"v{version}_{timestamp}.md"
+    version_path = os.path.join(versions_dir, version_filename)
+
+    # 現在のプロンプトをコピー
+    current_prompt_path = os.path.join(os.path.dirname(__file__), "prompts", "恋愛漫画マスタープロンプト.md")
+    with open(current_prompt_path, "r", encoding="utf-8") as f:
+        prompt_content = f.read()
+
+    # バージョン情報を先頭に追加
+    version_info = f"""# プロンプトバージョン: v{version}
+# 保存日時: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+# 説明: {description if description else "バージョン保存"}
+
+---
+
+{prompt_content}
+"""
+
+    with open(version_path, "w", encoding="utf-8") as f:
+        f.write(version_info)
+
+    return version_filename
+
+def get_available_prompt_versions():
+    """利用可能なプロンプトバージョン一覧を取得"""
+    versions_dir = os.path.join(os.path.dirname(__file__), "prompts", "versions")
+    if not os.path.exists(versions_dir):
+        return []
+
+    version_files = [f for f in os.listdir(versions_dir) if f.endswith('.md')]
+    version_files.sort(reverse=True)  # 新しい順
+    return version_files
+
+def load_prompt_version(version_filename):
+    """指定したバージョンのプロンプトを読み込む"""
+    version_path = os.path.join(os.path.dirname(__file__), "prompts", "versions", version_filename)
+    with open(version_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    # バージョン情報部分を除去（---以降が実際のプロンプト）
+    if "---" in content:
+        return content.split("---", 1)[1].strip()
+    return content
+
+def restore_prompt_version(version_filename):
+    """指定したバージョンのプロンプトを現在のプロンプトとして復元"""
+    prompt_content = load_prompt_version(version_filename)
+    current_prompt_path = os.path.join(os.path.dirname(__file__), "prompts", "恋愛漫画マスタープロンプト.md")
+
+    with open(current_prompt_path, "w", encoding="utf-8") as f:
+        f.write(prompt_content)
+
+    return True
+
 # マスタープロンプトを読み込む
 def load_master_prompt():
     prompt_path = os.path.join(os.path.dirname(__file__), "prompts", "恋愛漫画マスタープロンプト.md")
     with open(prompt_path, "r", encoding="utf-8") as f:
         return f.read()
 
-# シナリオの現実性チェック＆修正関数
+# シナリオ自動チェック＆リライト関数
 def check_and_fix_scenario(api_key, scenario_draft):
     """
-    生成されたシナリオの現実性をチェックし、問題があれば修正する
+    生成されたシナリオを自動でチェックし、品質向上のためにリライトする
     """
     client = anthropic.Anthropic(api_key=api_key)
 
-    check_prompt = f"""
-あなたは恋愛漫画のシナリオ監修者です。以下の生成されたシナリオを評価し、必要に応じて修正してください。
+    rewrite_prompt = f"""
+以下のシナリオを、チェック基準に基づいて 客観的に自己評価 → 問題点抽出 → 最適な形にリライト してください。
+トーンは漫画のネーム用のシナリオとして、テンポよく、読者にとって理解しやすく、感情移入しやすい形に整えてください。
 
-【生成されたシナリオ】
+【元のシナリオ】
 {scenario_draft}
 
-以下の観点でチェックし、問題があれば修正してください：
+【ステップ1：問題点の抽出】※内部処理のみ、出力不要
 
-1. **現実性**: 実際にありえる状況か？（完全なファンタジーは避ける）
-2. **共感性**: 読者が感情移入できるか？
-3. **法的・倫理的問題**: 法律や倫理に反する内容ではないか？
-4. **表現の適切性**: 過激すぎる・不適切な要素はないか？
-5. **ストーリー展開の論理性**: 物語として成立するか？矛盾はないか？
-6. **登場人物名**: A子、B男などの記号的な名前が使われているか？
+以下のチェック基準に照らして、改善すべき点を把握：
 
-【指示】
-- 問題がない場合：元のシナリオをそのまま出力してください
-- 問題がある場合：修正したシナリオを出力してください
-- 修正理由や判定結果は出力しないでください
-- シナリオの形式・構成は維持してください
-- 修正は必要最小限に留めてください
+▼ チェック基準
+1. ストーリーのつじつま
+   - 設定の矛盾はないか
+   - 行動の必然性はあるか
+   - 状況説明は明瞭か
+   - 現実味はあるか（倫理観、違法行為、NG描写）
 
-【出力】
-修正済みのシナリオをそのまま出力してください。
+2. セリフと感情の自然さ
+   - 会話の流れは自然か
+   - 年齢・性格に合った話し方か
+   - ポエム調・文学調を避けているか
+   - 共感を生む感情描写になっているか
+
+3. 話のまとまり・伏線回収
+   - 伏線の貼り方と回収
+   - 展開テンポ
+   - ラストの納得感
+
+4. 追加基準
+   - 冒頭5コマで「何の話か」理解できるか
+   - 主人公の魅力が一言で言えるか
+   - 感情のアップダウンが設計されているか
+   - ラストに読後の"ご褒美"があるか
+
+【ステップ2：シナリオの完全リライト版を生成】
+
+以下の条件を守って、最適化したシナリオを出力してください。
+
+▼ リライト条件
+- 1話10〜14Pのショート漫画を想定（前後編形式）
+- テンポの良いネーム用シナリオ
+- **【最重要】前後編でそれぞれ完結しつつ、後編を絶対に読みたくなる構造**
+  - 前編 = 問題提示 + 小解決（満足度60%）
+  - 後編 = 真相 + 本質的解決（満足度100%）
+  - 前編ラストに必ず「強烈な引き」を入れる（裏の事実／新キャラ登場／本当の問題／味方の違和感／深刻な予兆）
+  - 前編最後に後編タイトルを表示（例：`後編『〜』`）
+- **1ページ=ひとつの感情変化**を基本にする
+- キャラの行動と感情が自然
+- 読者（30〜45歳女性）が共感
+- セリフは短く、説明過多を避ける
+- ナレーション/モノローグ/描写のメリハリ
+- クライマックスに向けて段階的に盛り上げる
+- 伏線は自然に回収
+- 後編ラストは爽快感・解放感（ポエム調禁止）
+- NG描写（鬱・殺人・宗教・差別・過度な暴力）なし
+- **文字数制限【厳守】**：
+  - 前編：最大600文字以内（推奨400〜600文字）
+  - 後編：最大600文字以内（推奨400〜600文字）
+  - 合計：最大1200文字以内（推奨800〜1200文字）
+  - 絶対に上限を超えないこと
+- カウント方法：改行、※、「」、『』、■、（）、…、！、？、〜、スペースを除く
+- **制限内で面白さ最大化**：冗長な表現を削り、簡潔かつインパクトのある表現に
+
+【重要】出力はリライトしたシナリオのみ。分析や評価コメントは不要です。
+元のシナリオのフォーマット（【登場人物】から始まる形式）を維持してください。
 """
 
     try:
-        # チェック工程はHaikuモデルを使用してコスト削減
+        # リライト工程もHaikuで実施（コスト削減）
         message = client.messages.create(
             model="claude-haiku-3-5-20250313",
             max_tokens=8000,
-            temperature=0.3,
+            temperature=0.5,
             messages=[
-                {"role": "user", "content": check_prompt}
+                {"role": "user", "content": rewrite_prompt}
             ]
         )
 
@@ -148,6 +268,36 @@ def generate_scenario(api_key, theme, story_format, tone, additional_notes=""):
     master_prompt = load_master_prompt()
 
     # ユーザー入力を構造化
+    # 文字数ガイドライン設定
+    if "前後編" in story_format:
+        char_limit = """
+【必須】文字数制限：
+- **前編：最大600文字以内（推奨400〜600文字）**
+- **後編：最大600文字以内（推奨400〜600文字）**
+- **合計：最大1200文字以内（推奨800〜1200文字）**
+- **絶対に上限を超えないこと**
+
+【厳密】文字数カウント方法：
+- 改行、記号（※、「」、『』、■、（）、…、！、？、〜など）、スペースを除いた純粋なテキスト文字のみカウント
+- 登場人物セクションは文字数に含めない（シナリオ本文のみカウント）
+- カウント例：
+  - `A子「こんにちは」※笑顔` → カウント「A子こんにちは笑顔」= 9文字
+  - `※夜、仕事から帰宅したA子` → カウント「夜仕事から帰宅したA子」= 12文字
+
+【重要】面白さと制限のバランス：
+- 制限内で最高の面白さを実現すること
+- 冗長な表現は徹底的に削る
+- ストーリーの面白さ、キャラクターの魅力、感情の盛り上がりを大切に
+- 簡潔かつインパクトのある表現を心がける
+
+【必須】シナリオ出力時の文字数表記：
+- シナリオ本文の最後に、必ず以下の形式で実際の文字数を明記してください
+- 例：`文字数：前編482文字 / 後編518文字 / 合計1000文字`
+- 出力前に必ず文字数を実測し、制限内に収めること
+"""
+    else:
+        char_limit = ""
+
     user_prompt = f"""
 以下の条件で恋愛漫画のシナリオを生成してください。
 
@@ -162,16 +312,17 @@ def generate_scenario(api_key, theme, story_format, tone, additional_notes=""):
 
 【追加の要望】
 {additional_notes if additional_notes else "特になし"}
-
+{char_limit}
 上記の【シナリオ生成のための統合ナレッジ】と【出力形式】に従って、バズる恋愛漫画のシナリオを生成してください。
 """
 
     try:
         # プロンプトキャッシュを使用してコスト削減
+        # temperature: 文字数制限など具体的な制約がある場合は低めに設定
         message = client.messages.create(
             model="claude-sonnet-4-5-20250929",
             max_tokens=8000,
-            temperature=1.0,
+            temperature=0.7,  # 1.0から0.7に変更（より指示に従いやすく）
             system=[
                 {
                     "type": "text",
@@ -189,7 +340,7 @@ def generate_scenario(api_key, theme, story_format, tone, additional_notes=""):
         return f"エラーが発生しました: {str(e)}"
 
 # 履歴を保存
-def save_history(theme, story_format, tone, result, additional_notes="", feasibility_check=""):
+def save_history(theme, story_format, tone, result, additional_notes="", feasibility_check="", prompt_version=""):
     history_dir = os.path.join(os.path.dirname(__file__), "output")
     os.makedirs(history_dir, exist_ok=True)
 
@@ -204,6 +355,7 @@ def save_history(theme, story_format, tone, result, additional_notes="", feasibi
         "tone": tone,
         "additional_notes": additional_notes,
         "feasibility_check": feasibility_check,
+        "prompt_version": prompt_version,  # プロンプトバージョンを追加
         "result": result
     }
 
@@ -259,8 +411,8 @@ def main():
     load_dotenv()
 
     # ヘッダー
-    st.markdown(f'<div class="main-header">💘 恋愛漫画シナリオ生成ツール <span class="version-badge">v{VERSION}</span></div>', unsafe_allow_html=True)
-    st.markdown('<div class="sub-header">バズる恋愛漫画を1日10本生成！｜愛カツ専用ツール</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="main-header">💙 恋愛漫画シナリオ生成ツールv2 <span class="version-badge">v{VERSION}</span></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="sub-header">前後編完全最適化版（プロンプトv{PROMPT_VERSION}）｜愛カツ専用ツール</div>', unsafe_allow_html=True)
 
     # サイドバー設定
     with st.sidebar:
@@ -283,16 +435,9 @@ def main():
 
         st.divider()
 
-        # 形式選択
-        st.subheader("📖 漫画の形式")
-        story_format = st.selectbox(
-            "形式を選択",
-            [
-                "1話完結（10ページ）",
-                "前後編2話完結（各10ページ＝計20ページ）",
-                "10話連載（各10ページ＝計100ページ）"
-            ]
-        )
+        # 形式は前後編のみに固定（プロンプトv2.0に対応）
+        story_format = "前後編2話完結（前編5〜7ページ・後編5〜7ページ）"
+        st.info(f"📖 **形式**: {story_format}")
 
         # トーン選択
         st.subheader("🎭 トーン/雰囲気")
@@ -328,6 +473,53 @@ def main():
                     st.rerun()
         else:
             st.info("まだ生成履歴がありません")
+
+        st.divider()
+
+        # プロンプトバージョン管理
+        st.subheader("🔧 プロンプトバージョン管理")
+        st.caption(f"現在のバージョン: v{PROMPT_VERSION}")
+
+        # 利用可能なバージョン一覧
+        available_versions = get_available_prompt_versions()
+
+        if available_versions:
+            with st.expander("保存されたバージョン一覧"):
+                for version_file in available_versions:
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        st.text(version_file.replace('.md', ''))
+                    with col2:
+                        if st.button("復元", key=f"restore_{version_file}"):
+                            restore_prompt_version(version_file)
+                            st.success(f"✅ {version_file}に復元しました！")
+                            st.info("アプリを再起動すると反映されます")
+                            st.rerun()
+        else:
+            st.info("保存されたバージョンはありません")
+
+        st.divider()
+
+        # ツール情報
+        with st.expander("ℹ️ ツール情報"):
+            st.markdown(f"""
+**バージョン情報**
+- アプリバージョン: v{VERSION}
+- プロンプトバージョン: v{PROMPT_VERSION}
+
+**v2.0の主な変更点**
+- ✅ 前後編構成に完全最適化
+- ✅ プロンプト35%削減（639行→415行）
+- ✅ 文字数制限の厳格化（最大600/600/1200文字）
+- ✅ 不要な形式（1話完結・10話連載）を削除
+- ✅ バズる要素と胸キュンに集中
+- ✅ 自動文字数カウント機能追加
+
+**生成時間**
+- 初稿生成：約30〜60秒
+- 自動リライト：約20〜40秒
+- 合計：約1〜2分
+            """)
 
     # メインコンテンツ
     col1, col2 = st.columns([2, 1])
@@ -384,11 +576,11 @@ def main():
         if st.button("🎬 シナリオを生成する", type="primary"):
             with st.spinner("シナリオを生成中... 少々お待ちください💭"):
                 # ステップ1: シナリオ生成
-                with st.spinner("📝 シナリオを作成中..."):
+                with st.spinner("📝 シナリオ初稿を作成中..."):
                     draft_scenario = generate_scenario(api_key, theme, story_format, tone, additional_notes)
 
-                # ステップ2: 現実性チェック＆修正（内部処理、ユーザーには見せない）
-                with st.spinner("🔍 シナリオを検証・最適化中..."):
+                # ステップ2: 自動チェック＆リライト
+                with st.spinner("✨ 品質チェック＆自動リライト中..."):
                     final_scenario = check_and_fix_scenario(api_key, draft_scenario)
 
                 # セッションステートに保存
@@ -397,14 +589,15 @@ def main():
                 st.session_state.story_format = story_format
                 st.session_state.tone = tone
 
-                # 履歴に保存（現実性チェックは内部処理なので保存しない）
+                # 履歴に保存（プロンプトバージョンも記録）
                 save_history(
                     theme,
                     story_format,
                     tone,
                     final_scenario,
                     additional_notes=additional_notes,
-                    feasibility_check=""  # 空文字列にする
+                    feasibility_check="",  # 空文字列にする
+                    prompt_version=PROMPT_VERSION  # プロンプトバージョンを記録
                 )
 
                 st.rerun()
@@ -417,11 +610,13 @@ def main():
         st.header(f"📝 履歴 #{st.session_state.selected_history_index}")
 
         # 履歴情報の表示
+        prompt_ver = hist.get('prompt_version', '不明')
         st.info(f"""
 **テーマ**: {hist['theme']}
 **形式**: {hist['story_format']}
 **トーン**: {hist['tone']}
 **日時**: {hist['timestamp'][:19]}
+**プロンプトバージョン**: v{prompt_ver}
         """)
 
         if hist.get('additional_notes'):
@@ -432,6 +627,35 @@ def main():
         st.markdown('<div class="output-section">', unsafe_allow_html=True)
         st.markdown(hist['result'])
         st.markdown('</div>', unsafe_allow_html=True)
+
+        # 文字数カウント表示（前後編の場合）
+        if "前後編" in hist['story_format']:
+            scenario_text = hist['result']
+            # 登場人物セクションを除外
+            if "■前編" in scenario_text:
+                scenario_only = scenario_text.split("■前編", 1)[1] if "■前編" in scenario_text else scenario_text
+
+                # 前編と後編を分割
+                if "■後編" in scenario_only:
+                    parts = scenario_only.split("■後編")
+                    zenpen_text = parts[0]
+                    kohen_text = parts[1] if len(parts) > 1 else ""
+
+                    zenpen_count = count_characters(zenpen_text)
+                    kohen_count = count_characters(kohen_text)
+                    total_count = zenpen_count + kohen_count
+
+                    # 文字数表示
+                    st.info(f"""
+**📊 実測文字数**（改行・記号・括弧を除く）
+前編: {zenpen_count}文字 / 後編: {kohen_count}文字 / 合計: {total_count}文字
+                    """)
+
+                    # 文字数オーバーの警告
+                    if zenpen_count > 600 or kohen_count > 600 or total_count > 1200:
+                        st.warning("⚠️ 文字数が制限を超えています")
+                    elif total_count < 800:
+                        st.info("ℹ️ 推奨文字数（800-1200文字）より少なめです")
 
         # ダウンロードボタン
         col1, col2, col3 = st.columns([1, 1, 2])
@@ -494,6 +718,35 @@ def main():
         st.markdown('<div class="output-section">', unsafe_allow_html=True)
         st.markdown(st.session_state.result)
         st.markdown('</div>', unsafe_allow_html=True)
+
+        # 文字数カウント表示（前後編の場合）
+        if "前後編" in st.session_state.story_format:
+            scenario_text = st.session_state.result
+            # 登場人物セクションを除外
+            if "■前編" in scenario_text:
+                scenario_only = scenario_text.split("■前編", 1)[1] if "■前編" in scenario_text else scenario_text
+
+                # 前編と後編を分割
+                if "■後編" in scenario_only:
+                    parts = scenario_only.split("■後編")
+                    zenpen_text = parts[0]
+                    kohen_text = parts[1] if len(parts) > 1 else ""
+
+                    zenpen_count = count_characters(zenpen_text)
+                    kohen_count = count_characters(kohen_text)
+                    total_count = zenpen_count + kohen_count
+
+                    # 文字数表示
+                    st.info(f"""
+**📊 実測文字数**（改行・記号・括弧を除く）
+前編: {zenpen_count}文字 / 後編: {kohen_count}文字 / 合計: {total_count}文字
+                    """)
+
+                    # 文字数オーバーの警告
+                    if zenpen_count > 600 or kohen_count > 600 or total_count > 1200:
+                        st.warning("⚠️ 文字数が制限を超えています")
+                    elif total_count < 800:
+                        st.info("ℹ️ 推奨文字数（800-1200文字）より少なめです")
 
         # ダウンロードボタン
         col1, col2, col3 = st.columns([1, 1, 2])

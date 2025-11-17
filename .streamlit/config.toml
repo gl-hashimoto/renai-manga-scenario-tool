@@ -1,2 +1,8 @@
 # Streamlit Community Cloud用の設定
 # ローカルでのポート指定はstart.shで行います
+
+[browser]
+gatherUsageStats = false
+
+[server]
+headless = true
