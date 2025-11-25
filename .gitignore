@@ -14,7 +14,9 @@ env/
 ENV/
 
 # Output files
-output/
+# output/  # 生成履歴を永続化するため、Git管理に含める（コメントアウト）
+# 注意: 生成履歴はGitリポジトリに保存され、再デプロイ後も残ります
+# 履歴を削除したい場合は、output/ディレクトリ内のファイルを手動で削除してコミットしてください
 
 # Streamlit
 .streamlit/secrets.toml

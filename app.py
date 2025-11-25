@@ -9,7 +9,7 @@ import traceback
 from dotenv import load_dotenv, set_key
 
 # バージョン情報
-VERSION = "2.2.1"  # 文字数制限強化とテーマ忠実性改善版
+VERSION = "2.2.2"  # 生成履歴の永続化機能追加版
 PROMPT_VERSION = "2.0"  # プロンプトバージョン（最適化版：639行→415行に削減）
 
 # ============================================================================
@@ -772,6 +772,30 @@ def update_history(timestamp, updated_result):
                 return True
     return False
 
+# 履歴を削除
+def delete_history(timestamp):
+    """指定されたtimestampの履歴を削除"""
+    history_dir = os.path.join(os.path.dirname(__file__), "output")
+    history_files = [f for f in os.listdir(history_dir) if f.endswith('.json')]
+    
+    for filename in history_files:
+        filepath = os.path.join(history_dir, filename)
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if data.get('timestamp', '') == timestamp:
+                    # お気に入りからも削除
+                    favorites = get_favorites()
+                    if timestamp in favorites:
+                        favorites.remove(timestamp)
+                        save_favorites(favorites)
+                    # ファイルを削除
+                    os.remove(filepath)
+                    return True
+        except Exception as e:
+            continue
+    return False
+
 # APIキーを保存
 def save_api_key(api_key):
     """
@@ -1293,10 +1317,22 @@ def main():
                 st.rerun()
         
         with col4:
-            if st.button("✖️ 閉じる"):
-                del st.session_state.selected_history
-                del st.session_state.selected_history_index
-                st.rerun()
+            col_close, col_delete = st.columns(2)
+            with col_close:
+                if st.button("✖️ 閉じる"):
+                    del st.session_state.selected_history
+                    del st.session_state.selected_history_index
+                    st.rerun()
+            with col_delete:
+                if st.button("🗑️ 削除", type="secondary"):
+                    if delete_history(hist.get('timestamp', '')):
+                        st.success("✅ 履歴を削除しました")
+                        del st.session_state.selected_history
+                        del st.session_state.selected_history_index
+                        time.sleep(0.5)
+                        st.rerun()
+                    else:
+                        st.error("❌ 削除に失敗しました")
 
     elif "result" in st.session_state:
         # 新規生成された場合
